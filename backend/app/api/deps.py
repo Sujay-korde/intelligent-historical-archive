@@ -87,3 +87,12 @@ def get_graph_service(
     session: AsyncSession = Depends(get_db),
 ) -> GraphService:
     return GraphService(session=session)
+
+
+from backend.app.services.recommendation_service import RecommendationService
+
+
+def get_recommendation_service(
+    session: AsyncSession = Depends(get_db),
+) -> RecommendationService:
+    return RecommendationService(session=session)
