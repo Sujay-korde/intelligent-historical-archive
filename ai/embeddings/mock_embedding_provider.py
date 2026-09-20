@@ -13,8 +13,15 @@ class MockEmbeddingProvider(EmbeddingProvider):
     Texts with common words or character n-grams yield higher cosine similarity.
     """
 
-    def __init__(self, dimension: int = settings.EMBEDDING_DIMENSION):
+    def __init__(
+        self,
+        dimension: int = settings.EMBEDDING_DIMENSION,
+        model_name: str = "mock-feature-hash-v1",
+        model_version: str = "1.0.0",
+    ):
         self._dim = dimension
+        self._model_name = model_name
+        self._model_version = model_version
 
     @property
     def dimension(self) -> int:
@@ -22,11 +29,11 @@ class MockEmbeddingProvider(EmbeddingProvider):
 
     @property
     def model_name(self) -> str:
-        return "mock-feature-hash-v1"
+        return self._model_name
 
     @property
     def model_version(self) -> str:
-        return "1.0.0"
+        return self._model_version
 
     def _hash_token(self, token: str, dim: int) -> int:
         # Hash a token into an index [0, dim - 1]

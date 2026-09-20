@@ -1,3 +1,4 @@
+from ai.interfaces.embedding import EmbeddingProvider
 from ai.interfaces.extractor import (
     AIEnrichmentProvider,
     EntityExtractor,
@@ -10,4 +11,5 @@ __all__ = [
     "EntityExtractor",
     "Summarizer",
     "AIEnrichmentProvider",
+    "EmbeddingProvider",
 ]

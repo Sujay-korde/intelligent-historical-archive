@@ -10,6 +10,7 @@ class TextChunker(Chunker):
     Preserves page boundaries where possible, groups paragraphs, and breaks
     at sentence boundaries with overlap when text exceeds max_tokens.
     """
+    strategy_name: str = "TextChunker"
 
     def _estimate_tokens(self, text: str) -> int:
         # Fast whitespace-based token estimation (approx 1.3 words per token or ~4 chars per token)

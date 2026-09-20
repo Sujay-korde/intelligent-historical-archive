@@ -12,10 +12,11 @@ from backend.app.repositories.chunk_repo import ChunkRepository
 from backend.app.repositories.document_repo import DocumentRepository
 from backend.app.repositories.entity_repo import EntityRepository
 from processing.base import BaseProcessor, DocumentProcessor, ExtractedContent, ExtractedPage
-from processing.chunking.base import Chunker
+from processing.chunking.base import BaseChunker, Chunker
 from processing.chunking.text_chunker import TextChunker
 from processing.jobs.base import JobManager
 from processing.registry import ProcessorRegistry, get_default_registry
+from processing.services.embedding_pipeline_service import EmbeddingPipelineService
 from storage.base import StorageProvider
 from storage.local_storage import LocalStorageProvider
 
@@ -30,15 +31,21 @@ class ProcessingService:
         llm_provider: LLMProvider,
         embedding_provider: EmbeddingProvider,
         job_manager: JobManager,
+        chunker: Optional[BaseChunker] = None,
     ):
         self.session = session
         self.storage_provider = storage_provider
         self.llm_provider = llm_provider
         self.embedding_provider = embedding_provider
         self.job_manager = job_manager
-        self.chunker: Chunker = TextChunker()
+        self.chunker: BaseChunker = chunker or TextChunker()
         self.registry: ProcessorRegistry = get_default_registry()
         self.enrichment_service = EnrichmentService(provider=self.llm_provider)
+        self.embedding_pipeline = EmbeddingPipelineService(
+            session=self.session,
+            embedding_provider=self.embedding_provider,
+            chunker=self.chunker,
+        )
 
     def _select_processor(self, mime_type: str, file_name: str) -> BaseProcessor:
         try:
@@ -107,7 +114,7 @@ class ProcessingService:
             await doc_repo.update_status(document_id, status="PROCESSING", processing_stage="CHUNKING")
             await self.session.commit()
 
-            chunks = self.chunker.chunk(
+            chunks = self.embedding_pipeline.create_chunks(
                 extracted_content,
                 max_tokens=settings.MAX_CHUNK_TOKENS,
                 overlap=settings.CHUNK_OVERLAP_TOKENS,
@@ -119,17 +126,13 @@ class ProcessingService:
             await doc_repo.update_status(document_id, status="PROCESSING", processing_stage="EMBEDDING")
             await self.session.commit()
 
-            chunk_texts = [c.content for c in chunks]
-            embeddings = await self.embedding_provider.embed_texts(chunk_texts)
+            embeddings = await self.embedding_pipeline.generate_embeddings(chunks)
 
-            # 6. Save Chunks & Embeddings in PostgreSQL
-            await chunk_repo.save_chunks_and_embeddings(
+            # 6. Save Chunks & Embeddings in pgvector
+            embedded_chunks = await self.embedding_pipeline.store_in_pgvector(
                 document_id=document_id,
                 chunks=chunks,
                 embeddings=embeddings,
-                model_name=self.embedding_provider.model_name,
-                model_version=self.embedding_provider.model_version,
-                dimension=self.embedding_provider.dimension,
             )
 
             # 7. Entities & Relationships (Persisted during Enrichment step)
