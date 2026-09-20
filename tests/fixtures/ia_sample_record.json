@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "identifier": "constitutionofun00unit",
+    "title": "The Constitution of the United States of America: With Notes",
+    "creator": "Madison, James; Hamilton, Alexander; Jay, John",
+    "date": "1787-09-17",
+    "description": "Official text and commentary on the drafting and ratification of the Constitution.",
+    "subject": [
+      "Constitutional law; United States; Federal government"
+    ],
+    "mediatype": "texts",
+    "language": "English",
+    "licenseurl": "http://creativecommons.org/publicdomain/mark/1.0/",
+    "coverage": "Philadelphia, PA, USA",
+    "isbn": "9780123456789",
+    "ark": "ark:/13960/t00000000"
+  },
+  "files": [
+    {
+      "name": "constitutionofun00unit.pdf",
+      "format": "Text PDF",
+      "size": "1048576",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "server": "ia600000.us.archive.org",
+  "dir": "/items/constitutionofun00unit"
+}

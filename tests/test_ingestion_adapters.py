@@ -1,25 +1,45 @@
 import json
+from pathlib import Path
 import pytest
+import httpx
 from unittest.mock import AsyncMock, patch, MagicMock
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.app.core.exceptions import (
+    SourceAPIError,
+    SourceMediaDownloadError,
+    SourceRecordNotFoundError,
+    SourceUnavailableError,
+)
 from backend.app.models.document import Document
 from backend.app.models.metadata import DocumentMetadata
 from backend.app.models.media_asset import DocumentMediaAsset
 from ingestion.adapters.loc_adapter import LibraryOfCongressAdapter
 from ingestion.adapters.internet_archive_adapter import InternetArchiveAdapter
 from ingestion.models.canonical import CanonicalArchiveRecord, SourceRawRecord, SearchPage
-from ingestion.normalizers.loc_normalizer import LibraryOfCongressNormalizer
-from ingestion.normalizers.ia_normalizer import InternetArchiveNormalizer
 from ingestion.services.ingestion_service import CoreIngestionService
 from storage.local_storage import LocalStorageProvider
 
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
 
 # ---------------------------------------------------------------------------
-# MOCK FIXTURES FOR LIBRARY OF CONGRESS & INTERNET ARCHIVE
+# FIXTURE LOADERS (SEPARATED TEST ARTIFACTS)
 # ---------------------------------------------------------------------------
+
+@pytest.fixture
+def mock_loc_raw_record():
+    with open(FIXTURES_DIR / "loc_sample_record.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+@pytest.fixture
+def mock_ia_raw_record():
+    with open(FIXTURES_DIR / "ia_sample_record.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
 
 @pytest.fixture
 def mock_loc_raw_search():
@@ -47,36 +67,6 @@ def mock_loc_raw_search():
 
 
 @pytest.fixture
-def mock_loc_raw_record():
-    return {
-        "item": {
-            "title": ["Report on the Subject of Manufactures"],
-            "contributors": ["Hamilton, Alexander", "United States. Department of the Treasury"],
-            "date": "1791",
-            "notes": ["Foundational economic report submitted to the House of Representatives."],
-            "subjects": ["Manufactures", "Tariffs", "Economic Policy", "Early Republic"],
-            "medium": ["Manuscript/Mixed Material"],
-            "location": ["Philadelphia, Pennsylvania"],
-            "language": ["English"],
-            "rights_information": "Public Domain. No known copyright restrictions.",
-            "call_number": "HF105.C1 1791",
-            "lccn": "08034567",
-            "url": "https://www.loc.gov/item/08034567/",
-            "resources": [
-                {
-                    "files": [
-                        [
-                            {"url": "https://tile.loc.gov/storage-services/08034567/hamilton_manufactures.pdf"}
-                        ]
-                    ]
-                }
-            ],
-            "image_url": ["https://tile.loc.gov/image-services/08034567/thumb.jpg"],
-        }
-    }
-
-
-@pytest.fixture
 def mock_ia_raw_search():
     return {
         "response": {
@@ -95,46 +85,17 @@ def mock_ia_raw_search():
     }
 
 
-@pytest.fixture
-def mock_ia_raw_record():
-    return {
-        "metadata": {
-            "identifier": "constitutionofun00unit",
-            "title": "The Constitution of the United States of America: With Notes",
-            "creator": "Madison, James; Hamilton, Alexander; Jay, John",
-            "date": "1787-09-17",
-            "description": "Official text and commentary on the drafting of the Constitution.",
-            "subject": ["Constitutional law; United States; Federal government"],
-            "mediatype": "texts",
-            "language": "English",
-            "licenseurl": "http://creativecommons.org/publicdomain/mark/1.0/",
-            "coverage": "Philadelphia, PA, USA",
-            "isbn": "9780123456789",
-            "ark": "ark:/13960/t00000000",
-        },
-        "files": [
-            {
-                "name": "constitutionofun00unit.pdf",
-                "format": "Text PDF",
-                "size": "1048576",
-                "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            }
-        ],
-        "server": "ia600000.us.archive.org",
-        "dir": "/items/constitutionofun00unit",
-    }
-
-
 # ---------------------------------------------------------------------------
 # 1. LIBRARY OF CONGRESS ADAPTER UNIT TESTS
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_loc_adapter_search(mock_loc_raw_search):
+async def test_loc_adapter_search_mocked(mock_loc_raw_search):
     adapter = LibraryOfCongressAdapter()
 
     with patch("httpx.AsyncClient.get") as mock_get:
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_loc_raw_search
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
@@ -150,11 +111,22 @@ async def test_loc_adapter_search(mock_loc_raw_search):
 
 
 @pytest.mark.asyncio
-async def test_loc_adapter_fetch_record(mock_loc_raw_record):
+async def test_loc_adapter_search_network_failure_raises_explicit_error():
+    """Verifies that API connection errors are reported loudly without fake fallback data."""
+    adapter = LibraryOfCongressAdapter()
+
+    with patch("httpx.AsyncClient.get", side_effect=httpx.ConnectError("Connection refused")):
+        with pytest.raises(SourceUnavailableError, match="unreachable"):
+            await adapter.search(query="lincoln")
+
+
+@pytest.mark.asyncio
+async def test_loc_adapter_fetch_record_mocked(mock_loc_raw_record):
     adapter = LibraryOfCongressAdapter()
 
     with patch("httpx.AsyncClient.get") as mock_get:
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_loc_raw_record
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
@@ -164,6 +136,20 @@ async def test_loc_adapter_fetch_record(mock_loc_raw_record):
         assert raw_record.source == "library_of_congress"
         assert raw_record.source_id == "08034567"
         assert "item" in raw_record.raw_data
+
+
+@pytest.mark.asyncio
+async def test_loc_adapter_fetch_record_not_found_raises_error():
+    """Verifies that HTTP 404 returns SourceRecordNotFoundError instead of fake data."""
+    adapter = LibraryOfCongressAdapter()
+
+    with patch("httpx.AsyncClient.get") as mock_get:
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_get.return_value = mock_response
+
+        with pytest.raises(SourceRecordNotFoundError, match="not found"):
+            await adapter.fetch_record(source_id="non_existent_item_99999")
 
 
 def test_loc_normalization_and_provenance(mock_loc_raw_record):
@@ -178,7 +164,7 @@ def test_loc_normalization_and_provenance(mock_loc_raw_record):
     canonical = adapter.normalize(raw_record)
     assert isinstance(canonical, CanonicalArchiveRecord)
 
-    # Verify preserved core fields
+    # Core metadata preservation
     assert canonical.source == "library_of_congress"
     assert canonical.source_id == "08034567"
     assert canonical.title == "Report on the Subject of Manufactures"
@@ -200,7 +186,7 @@ def test_loc_normalization_and_provenance(mock_loc_raw_record):
     assert canonical.external_ids.get("call_number") == "HF105.C1 1791"
     assert canonical.external_ids.get("lccn") == "08034567"
 
-    # Verify ingestion provenance
+    # Provenance metadata preservation
     assert canonical.provenance.adapter_version == "1.0.0"
     assert canonical.provenance.original_source_id == "08034567"
     assert canonical.provenance.original_source_url == "https://www.loc.gov/item/08034567/"
@@ -213,11 +199,12 @@ def test_loc_normalization_and_provenance(mock_loc_raw_record):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_ia_adapter_search(mock_ia_raw_search):
+async def test_ia_adapter_search_mocked(mock_ia_raw_search):
     adapter = InternetArchiveAdapter()
 
     with patch("httpx.AsyncClient.get") as mock_get:
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_ia_raw_search
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
@@ -233,11 +220,22 @@ async def test_ia_adapter_search(mock_ia_raw_search):
 
 
 @pytest.mark.asyncio
-async def test_ia_adapter_fetch_record(mock_ia_raw_record):
+async def test_ia_adapter_search_network_failure_raises_explicit_error():
+    """Verifies that API connection errors are reported loudly without fake fallback data."""
+    adapter = InternetArchiveAdapter()
+
+    with patch("httpx.AsyncClient.get", side_effect=httpx.ConnectError("Connection refused")):
+        with pytest.raises(SourceUnavailableError, match="unreachable"):
+            await adapter.search(query="constitution")
+
+
+@pytest.mark.asyncio
+async def test_ia_adapter_fetch_record_mocked(mock_ia_raw_record):
     adapter = InternetArchiveAdapter()
 
     with patch("httpx.AsyncClient.get") as mock_get:
         mock_response = MagicMock()
+        mock_response.status_code = 200
         mock_response.json.return_value = mock_ia_raw_record
         mock_response.raise_for_status.return_value = None
         mock_get.return_value = mock_response
@@ -248,6 +246,21 @@ async def test_ia_adapter_fetch_record(mock_ia_raw_record):
         assert raw_record.source_id == "constitutionofun00unit"
         assert "metadata" in raw_record.raw_data
         assert "files" in raw_record.raw_data
+
+
+@pytest.mark.asyncio
+async def test_ia_adapter_fetch_record_not_found_raises_error():
+    """Verifies that missing IA records raise SourceRecordNotFoundError."""
+    adapter = InternetArchiveAdapter()
+
+    with patch("httpx.AsyncClient.get") as mock_get:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {}  # IA returns {} when item does not exist
+        mock_get.return_value = mock_response
+
+        with pytest.raises(SourceRecordNotFoundError, match="does not exist"):
+            await adapter.fetch_record(source_id="non_existent_ia_doc_12345")
 
 
 def test_ia_normalization_and_provenance(mock_ia_raw_record):
@@ -262,7 +275,7 @@ def test_ia_normalization_and_provenance(mock_ia_raw_record):
     canonical = adapter.normalize(raw_record)
     assert isinstance(canonical, CanonicalArchiveRecord)
 
-    # Verify preserved core fields
+    # Core metadata preservation
     assert canonical.source == "internet_archive"
     assert canonical.source_id == "constitutionofun00unit"
     assert canonical.title == "The Constitution of the United States of America: With Notes"
@@ -282,7 +295,7 @@ def test_ia_normalization_and_provenance(mock_ia_raw_record):
     assert canonical.external_ids.get("isbn") == "9780123456789"
     assert canonical.external_ids.get("ark") == "ark:/13960/t00000000"
 
-    # Verify ingestion provenance
+    # Provenance metadata preservation
     assert canonical.provenance.adapter_version == "1.0.0"
     assert canonical.provenance.original_source_id == "constitutionofun00unit"
     assert canonical.provenance.original_source_url == "https://archive.org/details/constitutionofun00unit"
@@ -346,8 +359,12 @@ async def test_end_to_end_ingestion_library_of_congress(
     loc_adapter = LibraryOfCongressAdapter()
     service = CoreIngestionService(session=async_test_db, storage_provider=test_storage)
 
-    # Mock fetch_record and download_media
-    with patch.object(loc_adapter, "fetch_record", new_callable=AsyncMock) as mock_fetch:
+    async def mock_download_stream(media_url: str):
+        yield b"%PDF-1.4\nReal binary data for LOC report\n%%EOF"
+
+    with patch.object(loc_adapter, "fetch_record", new_callable=AsyncMock) as mock_fetch, \
+         patch.object(loc_adapter, "download_media", side_effect=mock_download_stream):
+        
         mock_fetch.return_value = SourceRawRecord(
             source="library_of_congress",
             source_id="loc_hamilton_01",
@@ -393,7 +410,12 @@ async def test_end_to_end_ingestion_internet_archive(
     ia_adapter = InternetArchiveAdapter()
     service = CoreIngestionService(session=async_test_db, storage_provider=test_storage)
 
-    with patch.object(ia_adapter, "fetch_record", new_callable=AsyncMock) as mock_fetch:
+    async def mock_download_stream(media_url: str):
+        yield b"%PDF-1.4\nReal binary data for Internet Archive Constitution\n%%EOF"
+
+    with patch.object(ia_adapter, "fetch_record", new_callable=AsyncMock) as mock_fetch, \
+         patch.object(ia_adapter, "download_media", side_effect=mock_download_stream):
+        
         mock_fetch.return_value = SourceRawRecord(
             source="internet_archive",
             source_id="ia_constitution_01",

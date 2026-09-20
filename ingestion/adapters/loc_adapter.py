@@ -1,8 +1,13 @@
 import logging
-import re
 from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
 
+from backend.app.core.exceptions import (
+    SourceAPIError,
+    SourceMediaDownloadError,
+    SourceRecordNotFoundError,
+    SourceUnavailableError,
+)
 from ingestion.adapters.base import SourceAdapter
 from ingestion.models.canonical import (
     CanonicalArchiveRecord,
@@ -17,8 +22,9 @@ logger = logging.getLogger(__name__)
 
 class LibraryOfCongressAdapter(SourceAdapter):
     """
-    Adapter for the Library of Congress (LOC) API.
+    Production adapter for the Library of Congress (LOC) API.
     LOC provides open programmatic access to historical books, manuscripts, photographs, and newspapers.
+    Base search URL: https://www.loc.gov/search/?fo=json
     """
 
     BASE_URL = "https://www.loc.gov"
@@ -47,13 +53,32 @@ class LibraryOfCongressAdapter(SourceAdapter):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
                 resp = await client.get(url, params=params)
+                if resp.status_code == 404:
+                    return SearchPage(results=[], next_cursor=None, total_count=0)
                 resp.raise_for_status()
                 data = resp.json()
+        except httpx.ConnectError as e:
+            raise SourceUnavailableError(
+                f"Library of Congress API is currently unreachable at {url}: {e}",
+                details={"source": self.source_name, "query": query, "url": url},
+            ) from e
+        except httpx.TimeoutException as e:
+            raise SourceUnavailableError(
+                f"Library of Congress API timed out for query '{query}': {e}",
+                details={"source": self.source_name, "query": query, "url": url},
+            ) from e
+        except httpx.HTTPStatusError as e:
+            raise SourceAPIError(
+                f"Library of Congress API returned error HTTP {e.response.status_code}: {e}",
+                details={"source": self.source_name, "status_code": e.response.status_code, "url": url},
+            ) from e
         except Exception as e:
-            logger.warning(f"LOC search API failed or offline: {e}. Returning simulated search results.")
-            return self._fallback_search(query, limit, page)
+            raise SourceAPIError(
+                f"Unexpected error querying Library of Congress API: {e}",
+                details={"source": self.source_name, "query": query, "error": str(e)},
+            ) from e
 
         results: List[SourceSearchResult] = []
         raw_items = data.get("results", [])
@@ -80,7 +105,7 @@ class LibraryOfCongressAdapter(SourceAdapter):
                 img_val = item["image_url"]
                 image_url = img_val[0] if isinstance(img_val, list) and img_val else str(img_val)
 
-            # Determine media url (PDF or high-res scan)
+            # Extract media resource URL (PDF or high-res document image)
             media_url = image_url
             for link in item.get("resources", []):
                 for file_info in link.get("files", []):
@@ -114,8 +139,13 @@ class LibraryOfCongressAdapter(SourceAdapter):
         params = {"fo": "json"}
 
         try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
                 resp = await client.get(url, params=params)
+                if resp.status_code == 404:
+                    raise SourceRecordNotFoundError(
+                        f"Record '{source_id}' not found in Library of Congress repository at {url}.",
+                        details={"source": self.source_name, "source_id": source_id, "url": url},
+                    )
                 resp.raise_for_status()
                 data = resp.json()
                 return SourceRawRecord(
@@ -124,62 +154,67 @@ class LibraryOfCongressAdapter(SourceAdapter):
                     raw_data=data,
                     source_url=url,
                 )
+        except (SourceRecordNotFoundError, SourceUnavailableError, SourceAPIError):
+            raise
+        except httpx.ConnectError as e:
+            raise SourceUnavailableError(
+                f"Library of Congress service unreachable while fetching record '{source_id}': {e}",
+                details={"source": self.source_name, "source_id": source_id, "url": url},
+            ) from e
+        except httpx.TimeoutException as e:
+            raise SourceUnavailableError(
+                f"Library of Congress request timed out fetching record '{source_id}': {e}",
+                details={"source": self.source_name, "source_id": source_id, "url": url},
+            ) from e
+        except httpx.HTTPStatusError as e:
+            raise SourceAPIError(
+                f"Library of Congress returned HTTP {e.response.status_code} for record '{source_id}': {e}",
+                details={"source": self.source_name, "source_id": source_id, "status_code": e.response.status_code},
+            ) from e
         except Exception as e:
-            logger.warning(f"LOC fetch_record failed for {source_id}: {e}. Returning simulated raw record.")
-            return SourceRawRecord(
-                source=self.source_name,
-                source_id=source_id,
-                raw_data={
-                    "item": {
-                        "title": "Historical Manuscript on American Constitutional Law",
-                        "contributors": ["Library of Congress Rare Book and Special Collections Division"],
-                        "date": "1787",
-                        "notes": ["Original historical manuscript documenting legal proceedings."],
-                        "subjects": ["Constitutional Law", "American History", "Government"],
-                        "medium": ["Manuscript/Mixed Material"],
-                        "location": ["Philadelphia, Pennsylvania"],
-                        "language": ["English"],
-                        "rights_information": "Public Domain",
-                    }
-                },
-                source_url=url,
-            )
+            raise SourceAPIError(
+                f"Failed to retrieve record '{source_id}' from Library of Congress: {e}",
+                details={"source": self.source_name, "source_id": source_id, "error": str(e)},
+            ) from e
 
     async def download_media(self, media_url: str) -> AsyncIterator[bytes]:
         if not media_url or not media_url.startswith("http"):
-            sample_content = b"%PDF-1.4\n% Sample Library of Congress Manuscript Document\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000052 00000 n\n0000000101 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF"
-            async def fallback_stream():
-                yield sample_content
-            return fallback_stream()
+            raise SourceMediaDownloadError(
+                f"Cannot download media with invalid URL: '{media_url}'",
+                details={"source": self.source_name, "media_url": media_url},
+            )
 
         async def stream_generator():
             try:
-                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                     async with client.stream("GET", media_url) as resp:
+                        if resp.status_code == 404:
+                            raise SourceMediaDownloadError(
+                                f"Digital media asset not found at {media_url}",
+                                details={"source": self.source_name, "media_url": media_url, "status_code": 404},
+                            )
                         resp.raise_for_status()
                         async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
                             yield chunk
+            except SourceMediaDownloadError:
+                raise
+            except httpx.ConnectError as e:
+                raise SourceUnavailableError(
+                    f"Library of Congress media server unreachable at {media_url}: {e}",
+                    details={"source": self.source_name, "media_url": media_url},
+                ) from e
+            except httpx.HTTPStatusError as e:
+                raise SourceMediaDownloadError(
+                    f"Failed downloading media asset from {media_url} (HTTP {e.response.status_code}): {e}",
+                    details={"source": self.source_name, "media_url": media_url, "status_code": e.response.status_code},
+                ) from e
             except Exception as e:
-                logger.warning(f"LOC download_media failed for {media_url}: {e}. Yielding fallback content.")
-                yield b"%PDF-1.4\nFallback LOC Content"
+                raise SourceMediaDownloadError(
+                    f"Failed downloading media asset from {media_url}: {e}",
+                    details={"source": self.source_name, "media_url": media_url, "error": str(e)},
+                ) from e
 
         return stream_generator()
 
     def normalize(self, raw_record: SourceRawRecord) -> CanonicalArchiveRecord:
         return self._normalizer.normalize(raw_record)
-
-    def _fallback_search(self, query: str, limit: int, page: int) -> SearchPage:
-        results = [
-            SourceSearchResult(
-                source=self.source_name,
-                source_id=f"loc_{query.replace(' ', '_').lower()}_{i}",
-                title=f"LOC Historical Collection: {query.title()} Volume {i}",
-                description=f"Archival records and manuscripts concerning {query}.",
-                date=f"{1850 + i * 10}",
-                media_url=f"https://www.loc.gov/item/sample_{i}/sample_{i}.pdf",
-                thumbnail_url=f"https://www.loc.gov/item/sample_{i}/thumb.jpg",
-                record_type="document",
-            )
-            for i in range(1, min(limit + 1, 4))
-        ]
-        return SearchPage(results=results, next_cursor=str(page + 1), total_count=25)

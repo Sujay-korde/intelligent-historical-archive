@@ -11,7 +11,17 @@ class ArchiveException(Exception):
 
 
 class SourceAdapterError(ArchiveException):
-    """Raised when an external archive source fails or returns invalid data."""
+    """Base error for external archive source adapters."""
+    pass
+
+
+class SourceUnavailableError(SourceAdapterError):
+    """Raised when an external archive repository (LOC, Internet Archive, etc.) is unreachable."""
+    pass
+
+
+class SourceAPIError(SourceAdapterError):
+    """Raised when an external archive API returns an HTTP or payload error."""
     pass
 
 
@@ -21,7 +31,12 @@ class SourceRateLimitError(SourceAdapterError):
 
 
 class SourceRecordNotFoundError(SourceAdapterError):
-    """Raised when a specific source record is not found."""
+    """Raised when a specific source record is not found in the external repository."""
+    pass
+
+
+class SourceMediaDownloadError(SourceAdapterError):
+    """Raised when streaming or downloading digital assets fails."""
     pass
 
 

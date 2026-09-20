@@ -1,0 +1,46 @@
+{
+  "item": {
+    "title": ["Report on the Subject of Manufactures"],
+    "contributors": [
+      "Hamilton, Alexander",
+      "United States. Department of the Treasury"
+    ],
+    "date": "1791",
+    "notes": [
+      "Foundational economic report submitted to the House of Representatives on December 5, 1791."
+    ],
+    "subjects": [
+      "Manufactures",
+      "Tariffs",
+      "Economic Policy",
+      "Early Republic"
+    ],
+    "medium": [
+      "Manuscript/Mixed Material"
+    ],
+    "location": [
+      "Philadelphia, Pennsylvania"
+    ],
+    "language": [
+      "English"
+    ],
+    "rights_information": "Public Domain. No known copyright restrictions.",
+    "call_number": "HF105.C1 1791",
+    "lccn": "08034567",
+    "url": "https://www.loc.gov/item/08034567/",
+    "resources": [
+      {
+        "files": [
+          [
+            {
+              "url": "https://tile.loc.gov/storage-services/08034567/hamilton_manufactures.pdf"
+            }
+          ]
+        ]
+      }
+    ],
+    "image_url": [
+      "https://tile.loc.gov/image-services/08034567/thumb.jpg"
+    ]
+  }
+}

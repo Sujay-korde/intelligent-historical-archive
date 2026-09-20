@@ -2,6 +2,12 @@ import logging
 from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
 
+from backend.app.core.exceptions import (
+    SourceAPIError,
+    SourceMediaDownloadError,
+    SourceRecordNotFoundError,
+    SourceUnavailableError,
+)
 from ingestion.adapters.base import SourceAdapter
 from ingestion.models.canonical import (
     CanonicalArchiveRecord,
@@ -16,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class InternetArchiveAdapter(SourceAdapter):
     """
-    Adapter for the Internet Archive (archive.org) API.
+    Production adapter for the Internet Archive (archive.org) API.
     Provides access to millions of digitized historical books, manuscripts, audio, and visual materials.
     """
 
@@ -48,13 +54,32 @@ class InternetArchiveAdapter(SourceAdapter):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
                 resp = await client.get(self.SEARCH_URL, params=params)
+                if resp.status_code == 404:
+                    return SearchPage(results=[], next_cursor=None, total_count=0)
                 resp.raise_for_status()
                 data = resp.json()
+        except httpx.ConnectError as e:
+            raise SourceUnavailableError(
+                f"Internet Archive search service unreachable at {self.SEARCH_URL}: {e}",
+                details={"source": self.source_name, "query": query, "url": self.SEARCH_URL},
+            ) from e
+        except httpx.TimeoutException as e:
+            raise SourceUnavailableError(
+                f"Internet Archive search query '{query}' timed out: {e}",
+                details={"source": self.source_name, "query": query, "url": self.SEARCH_URL},
+            ) from e
+        except httpx.HTTPStatusError as e:
+            raise SourceAPIError(
+                f"Internet Archive search returned HTTP {e.response.status_code}: {e}",
+                details={"source": self.source_name, "status_code": e.response.status_code},
+            ) from e
         except Exception as e:
-            logger.warning(f"Internet Archive search API failed or offline: {e}. Returning simulated search results.")
-            return self._fallback_search(query, limit, page)
+            raise SourceAPIError(
+                f"Unexpected error querying Internet Archive API: {e}",
+                details={"source": self.source_name, "query": query, "error": str(e)},
+            ) from e
 
         response_block = data.get("response", {})
         docs = response_block.get("docs", [])
@@ -96,81 +121,90 @@ class InternetArchiveAdapter(SourceAdapter):
         url = f"{self.METADATA_URL}/{source_id}"
 
         try:
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
                 resp = await client.get(url)
+                if resp.status_code == 404:
+                    raise SourceRecordNotFoundError(
+                        f"Record '{source_id}' not found in Internet Archive repository at {url}.",
+                        details={"source": self.source_name, "source_id": source_id, "url": url},
+                    )
                 resp.raise_for_status()
                 data = resp.json()
+
+                # Archive.org returns empty json `{}` when an item does not exist
+                if not data or not data.get("metadata"):
+                    raise SourceRecordNotFoundError(
+                        f"Record '{source_id}' contains no metadata or does not exist in Internet Archive.",
+                        details={"source": self.source_name, "source_id": source_id},
+                    )
+
                 return SourceRawRecord(
                     source=self.source_name,
                     source_id=source_id,
                     raw_data=data,
                     source_url=f"{self.BASE_URL}/details/{source_id}",
                 )
+        except (SourceRecordNotFoundError, SourceUnavailableError, SourceAPIError):
+            raise
+        except httpx.ConnectError as e:
+            raise SourceUnavailableError(
+                f"Internet Archive metadata service unreachable for record '{source_id}': {e}",
+                details={"source": self.source_name, "source_id": source_id, "url": url},
+            ) from e
+        except httpx.TimeoutException as e:
+            raise SourceUnavailableError(
+                f"Internet Archive request timed out fetching record '{source_id}': {e}",
+                details={"source": self.source_name, "source_id": source_id, "url": url},
+            ) from e
+        except httpx.HTTPStatusError as e:
+            raise SourceAPIError(
+                f"Internet Archive returned HTTP {e.response.status_code} for record '{source_id}': {e}",
+                details={"source": self.source_name, "source_id": source_id, "status_code": e.response.status_code},
+            ) from e
         except Exception as e:
-            logger.warning(f"Internet Archive fetch_record failed for {source_id}: {e}. Returning simulated raw record.")
-            return SourceRawRecord(
-                source=self.source_name,
-                source_id=source_id,
-                raw_data={
-                    "metadata": {
-                        "identifier": source_id,
-                        "title": "Historical Records and Constitutional Debates (1787)",
-                        "creator": "Madison, James; Hamilton, Alexander",
-                        "date": "1787",
-                        "description": "Comprehensive historical transcripts and legislative archives.",
-                        "subject": ["Constitutional History", "United States", "Founding Era"],
-                        "mediatype": "texts",
-                        "language": "English",
-                        "licenseurl": "http://creativecommons.org/publicdomain/mark/1.0/",
-                        "coverage": "Philadelphia, PA",
-                    },
-                    "files": [
-                        {
-                            "name": f"{source_id}.pdf",
-                            "format": "Text PDF",
-                            "size": "2048576",
-                            "sha256": "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-                        }
-                    ],
-                },
-                source_url=f"{self.BASE_URL}/details/{source_id}",
-            )
+            raise SourceAPIError(
+                f"Failed retrieving record '{source_id}' from Internet Archive: {e}",
+                details={"source": self.source_name, "source_id": source_id, "error": str(e)},
+            ) from e
 
     async def download_media(self, media_url: str) -> AsyncIterator[bytes]:
         if not media_url or not media_url.startswith("http"):
-            sample_content = b"%PDF-1.4\n% Sample Internet Archive Digitized Book\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000052 00000 n\n0000000101 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF"
-            async def fallback_stream():
-                yield sample_content
-            return fallback_stream()
+            raise SourceMediaDownloadError(
+                f"Cannot download media with invalid URL: '{media_url}'",
+                details={"source": self.source_name, "media_url": media_url},
+            )
 
         async def stream_generator():
             try:
-                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
                     async with client.stream("GET", media_url) as resp:
+                        if resp.status_code == 404:
+                            raise SourceMediaDownloadError(
+                                f"Digital media asset not found at {media_url}",
+                                details={"source": self.source_name, "media_url": media_url, "status_code": 404},
+                            )
                         resp.raise_for_status()
                         async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
                             yield chunk
+            except SourceMediaDownloadError:
+                raise
+            except httpx.ConnectError as e:
+                raise SourceUnavailableError(
+                    f"Internet Archive media cluster unreachable at {media_url}: {e}",
+                    details={"source": self.source_name, "media_url": media_url},
+                ) from e
+            except httpx.HTTPStatusError as e:
+                raise SourceMediaDownloadError(
+                    f"Failed downloading media asset from {media_url} (HTTP {e.response.status_code}): {e}",
+                    details={"source": self.source_name, "media_url": media_url, "status_code": e.response.status_code},
+                ) from e
             except Exception as e:
-                logger.warning(f"Internet Archive download_media failed for {media_url}: {e}. Yielding fallback content.")
-                yield b"%PDF-1.4\nFallback Internet Archive Content"
+                raise SourceMediaDownloadError(
+                    f"Failed downloading media asset from {media_url}: {e}",
+                    details={"source": self.source_name, "media_url": media_url, "error": str(e)},
+                ) from e
 
         return stream_generator()
 
     def normalize(self, raw_record: SourceRawRecord) -> CanonicalArchiveRecord:
         return self._normalizer.normalize(raw_record)
-
-    def _fallback_search(self, query: str, limit: int, page: int) -> SearchPage:
-        results = [
-            SourceSearchResult(
-                source=self.source_name,
-                source_id=f"ia_{query.replace(' ', '_').lower()}_{i}",
-                title=f"Internet Archive Collection: {query.title()} Tome {i}",
-                description=f"Digitized historical volumes and papers on {query}.",
-                date=f"{1880 + i * 5}",
-                media_url=f"https://archive.org/download/sample_{i}/sample_{i}.pdf",
-                thumbnail_url=f"https://archive.org/services/img/sample_{i}",
-                record_type="book",
-            )
-            for i in range(1, min(limit + 1, 4))
-        ]
-        return SearchPage(results=results, next_cursor=str(page + 1), total_count=30)
