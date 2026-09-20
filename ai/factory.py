@@ -21,7 +21,7 @@ def create_enrichment_provider(
     chosen_provider = (provider_type or settings.AI_PROVIDER).lower().strip()
 
     if chosen_provider == "gemini":
-        key = api_key or settings.GEMINI_API_KEY
+        key = api_key if api_key is not None else settings.GEMINI_API_KEY
         if key:
             model_name = model or "gemini-2.5-flash"
             logger.info(f"Initialized Gemini AI Enrichment Provider with model '{model_name}'.")

@@ -6,7 +6,7 @@ def test_default_settings():
     assert config.PROJECT_NAME == "Intelligent Knowledge Archive"
     assert config.API_V1_STR == "/api/v1"
     assert config.STORAGE_BACKEND in ["local", "s3"]
-    assert config.EMBEDDING_DIMENSION == 384
+    assert config.EMBEDDING_DIMENSION == 768
     assert isinstance(config.CORS_ORIGINS, list)
 
 

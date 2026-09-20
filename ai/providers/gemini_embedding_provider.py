@@ -5,7 +5,6 @@ from typing import List, Optional
 import httpx
 
 from ai.interfaces.embedding import EmbeddingProvider
-from ai.embeddings.mock_embedding_provider import MockEmbeddingProvider
 from backend.app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -13,9 +12,9 @@ logger = logging.getLogger(__name__)
 
 class GeminiEmbeddingProvider(EmbeddingProvider):
     """
-    Embedding Provider using Google Gemini REST API.
-    Uses 'gemini-embedding-001' (alias for 'text-embedding-004')
-    with native outputDimensionality=768 support.
+    Real Embedding Provider using Google Gemini REST API.
+    Uses 'gemini-embedding-001' (also supporting 'text-embedding-004' as alias)
+    with native outputDimensionality support (defaults to 768).
     """
 
     def __init__(
@@ -28,12 +27,12 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         raw_model = model or getattr(settings, "EMBEDDING_MODEL", "gemini-embedding-001")
         # In 2026 API, text-embedding-004 is succeeded by gemini-embedding-001
         if "text-embedding-004" in raw_model:
+            logger.info("Mapping 'text-embedding-004' to supported active model 'gemini-embedding-001'")
             self._model = "gemini-embedding-001"
         else:
             self._model = raw_model
 
         self._dimension = dimension or getattr(settings, "EMBEDDING_DIMENSION", 768)
-        self._fallback = MockEmbeddingProvider(dimension=self._dimension)
 
     @property
     def dimension(self) -> int:
@@ -48,6 +47,9 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         return "1.0.0"
 
     async def _embed_single(self, client: httpx.AsyncClient, text: str) -> List[float]:
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY is not configured.")
+
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:embedContent?key={self.api_key}"
         payload = {
             "model": f"models/{self._model}",
@@ -58,18 +60,24 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         for attempt in range(3):
             try:
                 resp = await client.post(url, json=payload)
-                if resp.status_code in (429, 503):
+                if resp.status_code == 503 or resp.status_code == 429:
                     await asyncio.sleep(1.0 * (attempt + 1))
                     continue
                 resp.raise_for_status()
                 data = resp.json()
                 values = data.get("embedding", {}).get("values", [])
                 if not values:
-                    raise ValueError(f"No embedding values returned by {self._model}")
+                    raise ValueError(f"Empty embedding returned by {self._model}")
 
-                if len(values) > self._dimension:
-                    values = values[: self._dimension]
+                # Ensure exact requested dimension
+                if len(values) != self._dimension:
+                    logger.warning(
+                        f"Expected dimension {self._dimension} but received {len(values)}. Adjusting."
+                    )
+                    if len(values) > self._dimension:
+                        values = values[: self._dimension]
 
+                # L2 normalize
                 norm = math.sqrt(sum(x * x for x in values)) or 1.0
                 return [round(x / norm, 6) for x in values]
             except Exception as e:
@@ -77,20 +85,12 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                     raise e
                 await asyncio.sleep(1.0 * (attempt + 1))
 
-        raise RuntimeError(f"Failed to generate embedding for text: {text[:50]}...")
+        raise RuntimeError(f"Failed to generate embedding after retries for text: {text[:50]}...")
 
     async def embed_texts(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
 
-        if not self.api_key:
-            logger.warning("GEMINI_API_KEY not configured. Falling back to mock embeddings.")
-            return await self._fallback.embed_texts(texts)
-
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                tasks = [self._embed_single(client, t) for t in texts]
-                return await asyncio.gather(*tasks)
-        except Exception as e:
-            logger.warning(f"Gemini embed_texts failed ({e}). Falling back to mock embeddings.")
-            return await self._fallback.embed_texts(texts)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            tasks = [self._embed_single(client, t) for t in texts]
+            return await asyncio.gather(*tasks)

@@ -20,9 +20,24 @@ class TesseractOCRProvider(BaseOCRProvider):
     provider_version: str = "1.0.0"
 
     def __init__(self, tesseract_cmd: Optional[str] = None):
-        if tesseract_cmd:
+        import sys
+        from pathlib import Path
+        try:
             import pytesseract
-            pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+            candidates = [
+                tesseract_cmd,
+                shutil.which("tesseract"),
+                shutil.which("tesseract.cmd"),
+                shutil.which("tesseract.exe"),
+                str(Path(sys.prefix) / "Scripts" / "tesseract.cmd"),
+                r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            ]
+            for c in candidates:
+                if c and (shutil.which(c) or Path(c).exists()):
+                    pytesseract.pytesseract.tesseract_cmd = str(c)
+                    break
+        except Exception:
+            pass
         self._available: Optional[bool] = None
 
     def is_available(self) -> bool:
@@ -31,10 +46,9 @@ class TesseractOCRProvider(BaseOCRProvider):
 
         try:
             import pytesseract
-            # Check if tesseract binary exists in PATH or configured path
             cmd = pytesseract.pytesseract.tesseract_cmd
+            from pathlib import Path
             if shutil.which(cmd) or (cmd != "tesseract" and Path(cmd).exists()):
-                # Test call to verify execution
                 pytesseract.get_tesseract_version()
                 self._available = True
             else:
@@ -78,7 +92,10 @@ class TesseractOCRProvider(BaseOCRProvider):
         import pytesseract
 
         try:
-            image = Image.open(io.BytesIO(image_bytes))
+            if isinstance(image_bytes, Image.Image):
+                image = image_bytes
+            else:
+                image = Image.open(io.BytesIO(image_bytes))
             processed_image = self._preprocess_image(image)
 
             # Extract text

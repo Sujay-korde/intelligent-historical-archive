@@ -30,9 +30,9 @@ class GeminiProvider(AIEnrichmentProvider):
     """
     provider_name: str = "Gemini"
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or settings.GEMINI_API_KEY
-        self.model = model
+        self.model = model or getattr(settings, "GEMINI_MODEL", "gemini-flash-latest")
         self.fallback = MockLLMProvider()
 
     @property
@@ -45,46 +45,59 @@ class GeminiProvider(AIEnrichmentProvider):
 
     async def _call_gemini_rest(self, prompt: str, schema_dict: Dict[str, Any]) -> str:
         """
-        Executes REST call to Gemini generateContent endpoint.
+        Executes REST call to Gemini generateContent endpoint with retry on temporary 503 capacity spikes.
         """
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is not set.")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": (
-                                "You are an archival historian and knowledge extraction assistant. "
-                                "Analyze the provided historical document text and return strictly valid JSON matching this schema:\n"
-                                f"{json.dumps(schema_dict, indent=2)}\n\n"
-                                f"Text to analyze:\n{prompt}"
-                            )
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "responseMimeType": "application/json",
-            },
-        }
+        candidate_models = [self.model]
+        for fallback_model in ["gemini-flash-lite-latest", "gemini-3.1-flash-lite"]:
+            if fallback_model not in candidate_models:
+                candidate_models.append(fallback_model)
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+        last_err = None
+        for model_to_use in candidate_models:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_to_use}:generateContent?key={self.api_key}"
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": (
+                                    "You are an archival historian and knowledge extraction assistant. "
+                                    "Analyze the provided historical document text and return strictly valid JSON matching this schema:\n"
+                                    f"{json.dumps(schema_dict, indent=2)}\n\n"
+                                    f"Text to analyze:\n{prompt}"
+                                )
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                },
+            }
 
-        candidates = data.get("candidates", [])
-        if not candidates:
-            raise ValueError("No candidates returned by Gemini.")
+            for attempt in range(2):
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp = await client.post(url, json=payload)
+                        if resp.status_code == 503:
+                            await asyncio.sleep(1.0 * (attempt + 1))
+                            continue
+                        resp.raise_for_status()
+                        data = resp.json()
 
-        parts = candidates[0].get("content", {}).get("parts", [])
-        if not parts:
-            raise ValueError("Empty candidate content parts.")
+                    candidates = data.get("candidates", [])
+                    if candidates and candidates[0].get("content", {}).get("parts"):
+                        self.model = model_to_use
+                        return candidates[0]["content"]["parts"][0].get("text", "")
+                except Exception as e:
+                    last_err = e
+                    if attempt == 0:
+                        await asyncio.sleep(1.0)
 
-        return parts[0].get("text", "")
+        raise last_err or ValueError("Failed to obtain response from Gemini.")
 
     async def extract_metadata(
         self, text: str, context: Optional[Dict[str, Any]] = None

@@ -32,11 +32,12 @@ class Settings(BaseSettings):
     # AI & Embeddings
     AI_PROVIDER: str = "mock"  # gemini, openai, or mock
     GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-flash-lite-latest"
     OPENAI_API_KEY: str = ""
 
-    EMBEDDING_PROVIDER: str = "mock"  # sentence_transformers, gemini, or mock
-    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
-    EMBEDDING_DIMENSION: int = 384
+    EMBEDDING_PROVIDER: str = "gemini"  # gemini, sentence_transformers, or mock
+    EMBEDDING_MODEL: str = "gemini-embedding-001"
+    EMBEDDING_DIMENSION: int = 768
 
     # Processing
     OCR_ENABLED: bool = True
