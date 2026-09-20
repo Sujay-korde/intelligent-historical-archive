@@ -5,6 +5,7 @@ import { ZoomIn, ZoomOut, Maximize2, FileText, Image as ImageIcon, BookOpen, Ext
 
 interface ArchivalViewerProps {
   title: string;
+  recordType?: string;
   mediaAssets: Array<{
     id: string;
     asset_role: string;
@@ -21,6 +22,7 @@ interface ArchivalViewerProps {
 
 export default function ArchivalViewer({
   title,
+  recordType,
   mediaAssets = [],
   sourceUrl,
   extractedTextPreview = '',
@@ -29,17 +31,65 @@ export default function ArchivalViewer({
   const [zoomLevel, setZoomLevel] = useState(1.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  const primaryAsset = mediaAssets[0] || null;
-  const isPdf = Boolean(primaryAsset?.mime_type?.includes('pdf') || primaryAsset?.storage_key?.toLowerCase().endsWith('.pdf'));
-  const isImage = Boolean(primaryAsset?.mime_type?.includes('image') || primaryAsset?.storage_key?.toLowerCase().match(/\.(jpg|jpeg|png|tif|tiff|webp)$/i));
-  const isAudio = Boolean(primaryAsset?.mime_type?.includes('audio') || primaryAsset?.storage_key?.toLowerCase().match(/\.(mp3|m4a|wav|ogg)$/i));
-  const isVideo = Boolean(primaryAsset?.mime_type?.includes('video') || primaryAsset?.storage_key?.toLowerCase().match(/\.(mp4|webm|mov|mkv|avi)$/i));
+  // Intelligently select asset matching recordType or primary role
+  const primaryAsset =
+    (recordType === 'video'
+      ? mediaAssets.find((a) => a.media_type === 'video' || a.mime_type?.includes('video'))
+      : recordType === 'audio'
+      ? mediaAssets.find((a) => a.media_type === 'audio' || a.mime_type?.includes('audio'))
+      : null) ||
+    mediaAssets.find((a) => a.asset_role === 'primary') ||
+    mediaAssets[0] ||
+    null;
+
+  const rawKey = primaryAsset?.storage_key || primaryAsset?.access_url || '';
+
+  const isVideo = Boolean(
+    recordType === 'video' ||
+    primaryAsset?.media_type === 'video' ||
+    primaryAsset?.mime_type?.includes('video') ||
+    rawKey.toLowerCase().match(/\.(mp4|webm|mov|mkv|avi|ogv|m4v)(\?.*)?$/i)
+  );
+  const isAudio = Boolean(
+    !isVideo && (
+      recordType === 'audio' ||
+      primaryAsset?.media_type === 'audio' ||
+      primaryAsset?.mime_type?.includes('audio') ||
+      rawKey.toLowerCase().match(/\.(mp3|m4a|wav|ogg|flac|aac)(\?.*)?$/i)
+    )
+  );
+  const isImage = Boolean(
+    !isVideo && !isAudio && (
+      recordType === 'map' ||
+      recordType === 'photograph' ||
+      primaryAsset?.media_type === 'image' ||
+      primaryAsset?.mime_type?.includes('image') ||
+      rawKey.toLowerCase().match(/\.(jpg|jpeg|png|tif|tiff|webp)(\?.*)?$/i)
+    )
+  );
+  const isPdf = Boolean(
+    !isVideo && !isAudio && !isImage && (
+      primaryAsset?.mime_type?.includes('pdf') ||
+      rawKey.toLowerCase().endsWith('.pdf')
+    )
+  );
 
   const handleZoomIn = () => setZoomLevel((z) => Math.min(z + 0.25, 2.5));
   const handleZoomOut = () => setZoomLevel((z) => Math.max(z - 0.25, 0.5));
   const handleResetZoom = () => setZoomLevel(1.0);
 
-  const mediaUrl = primaryAsset ? `/api/v1/media/${primaryAsset.storage_key}` : null;
+  let mediaUrl: string | null = null;
+  if (rawKey) {
+    if (rawKey.startsWith('http://') || rawKey.startsWith('https://')) {
+      mediaUrl = rawKey;
+    } else if (rawKey.startsWith('/api/v1/media/')) {
+      mediaUrl = rawKey;
+    } else {
+      mediaUrl = `/api/v1/media/${rawKey}`;
+    }
+  } else if (primaryAsset?.access_url) {
+    mediaUrl = primaryAsset.access_url;
+  }
 
   return (
     <div
@@ -290,22 +340,73 @@ export default function ArchivalViewer({
                   flexDirection: 'column',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  backgroundColor: '#000000',
-                  padding: '1rem',
+                  backgroundColor: '#0A0A0A',
+                  padding: '1.25rem',
                 }}
               >
                 <video
                   controls
-                  src={mediaUrl}
+                  playsInline
+                  preload="metadata"
                   style={{
                     maxWidth: '100%',
-                    maxHeight: '560px',
+                    maxHeight: '520px',
                     borderRadius: 'var(--radius-xs)',
-                    boxShadow: '0 8px 30px rgba(0,0,0,0.6)',
+                    boxShadow: '0 8px 30px rgba(0,0,0,0.7)',
+                    outline: 'none',
+                    backgroundColor: '#000000',
                   }}
                 >
-                  Your browser does not support video playback.
+                  <source src={mediaUrl} type={primaryAsset?.mime_type || 'video/mp4'} />
+                  Your browser does not support HTML5 video playback.
                 </video>
+
+                {/* Archival Video Metadata & Direct Stream Bar */}
+                <div
+                  style={{
+                    marginTop: '1rem',
+                    width: '100%',
+                    maxWidth: '680px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '0.6rem 1rem',
+                    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                    borderRadius: 'var(--radius-xs)',
+                    fontSize: '0.75rem',
+                    color: 'rgba(255, 255, 255, 0.75)',
+                    gap: '1rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <VideoIcon size={14} color="var(--color-accent-gold)" />
+                    <span>Archival Master ({primaryAsset?.mime_type || 'video/mp4'})</span>
+                    {primaryAsset?.file_size_bytes && (
+                      <span style={{ opacity: 0.6 }}>
+                        • {(primaryAsset.file_size_bytes / (1024 * 1024)).toFixed(1)} MB
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <a
+                      href={mediaUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        color: 'var(--color-accent-gold)',
+                        textDecoration: 'none',
+                        fontWeight: 500,
+                      }}
+                    >
+                      <ExternalLink size={12} />
+                      <span>Direct Stream</span>
+                    </a>
+                  </div>
+                </div>
               </div>
             ) : (
               <div style={{ color: 'var(--color-surface-dark-text)', textAlign: 'center', padding: '2rem' }}>

@@ -77,18 +77,23 @@ class CoreIngestionService:
 
             storage_key = f"{category}/{canonical_record.source}/{canonical_record.source_id}.{ext}"
 
-            try:
-                media_stream = await adapter.download_media(primary_asset.url)
-                stored_meta = await self.storage_provider.save_stream(
-                    stream=media_stream,
-                    destination_key=storage_key,
-                    content_type=primary_asset.mime_type,
-                )
-                primary_asset.storage_key = stored_meta.storage_key
-                primary_asset.file_size_bytes = stored_meta.file_size_bytes
-                primary_asset.checksum_sha256 = stored_meta.checksum_sha256
-            except Exception as e:
-                logger.warning(f"Media streaming failed for {canonical_record.source_id}: {e}")
+            if primary_asset.media_type == "video" and (primary_asset.file_size_bytes or 0) > 15_000_000:
+                # For large motion picture video assets, stream directly from external repository
+                primary_asset.storage_key = primary_asset.url
+            else:
+                try:
+                    media_stream = await adapter.download_media(primary_asset.url)
+                    stored_meta = await self.storage_provider.save_stream(
+                        stream=media_stream,
+                        destination_key=storage_key,
+                        content_type=primary_asset.mime_type,
+                    )
+                    primary_asset.storage_key = stored_meta.storage_key
+                    primary_asset.file_size_bytes = stored_meta.file_size_bytes
+                    primary_asset.checksum_sha256 = stored_meta.checksum_sha256
+                except Exception as e:
+                    logger.warning(f"Media streaming/download failed for {canonical_record.source_id}: {e}")
+                    primary_asset.storage_key = primary_asset.url
 
         # 4. Ingest canonical record into database
         return await self.ingest_canonical_record(canonical_record, auto_process=auto_process)

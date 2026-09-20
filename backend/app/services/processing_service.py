@@ -90,10 +90,15 @@ class ProcessingService:
                         extracted_content = await processor.extract_content(local_path)
                         file_found = True
 
-            if not file_found:
-                # Use document title, description, and subjects to construct synthetic content
+            if not file_found or not extracted_content or not (extracted_content.full_text or "").strip():
+                # Use document title, description, and metadata to construct rich contextual content
                 desc = doc.description or f"Archival document on {doc.title}"
-                full_text = f"Title: {doc.title}\n\nDescription: {desc}\n\nSource: {doc.source}"
+                creator_str = ""
+                if doc.doc_metadata and doc.doc_metadata.creators:
+                    creator_str = ", ".join([c.get("name", "") for c in doc.doc_metadata.creators if isinstance(c, dict) and c.get("name")])
+                date_str = doc.doc_metadata.date_raw if (doc.doc_metadata and doc.doc_metadata.date_raw) else ""
+                subj_str = ", ".join(doc.doc_metadata.subjects) if (doc.doc_metadata and doc.doc_metadata.subjects) else ""
+                full_text = f"Title: {doc.title}\nCreator: {creator_str}\nDate: {date_str}\nSubjects: {subj_str}\nDescription: {desc}\nArchival Format: {doc.record_type}\nSource: {doc.source} ({doc.source_id})"
                 extracted_content = ExtractedContent(
                     pages=[ExtractedPage(page_number=1, text=full_text)],
                     total_pages=1,

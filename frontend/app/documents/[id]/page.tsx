@@ -183,6 +183,7 @@ export default function DocumentDetailPage() {
         <div>
           <ArchivalViewer
             title={doc.title}
+            recordType={doc.record_type}
             mediaAssets={doc.media_assets}
             sourceUrl={doc.source_url}
             extractedTextPreview={doc.description || ''}

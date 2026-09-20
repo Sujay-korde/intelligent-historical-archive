@@ -118,9 +118,18 @@ class InternetArchiveNormalizer(RecordNormalizer):
             for k in ["manuscript", "holograph", "letter to", "[letter", "diary", "journal", "personal papers"]
         )
 
+        # Check if files explicitly contain video files
+        has_video_file = any(
+            isinstance(f, dict) and f.get("name", "").lower().endswith((".mp4", ".webm", ".ogv", ".mov", ".mkv", ".avi", ".m4v"))
+            for f in (files if isinstance(files, list) else [])
+        )
+
         if mediatype in ["audio", "sound"]:
             record_type = "audio"
             media_type = "audio"
+        elif mediatype in ["movies", "movie", "movingimage", "film", "video"] or has_video_file:
+            record_type = "video"
+            media_type = "video"
         elif mediatype in ["image", "photo"]:
             if "map" in title_lower or "atlas" in title_lower or "cartograph" in all_subj_text:
                 record_type = "map"
@@ -133,9 +142,6 @@ class InternetArchiveNormalizer(RecordNormalizer):
         elif mediatype in ["texts", "book"]:
             record_type = "book"
             media_type = "document"
-        elif mediatype in ["movies", "film", "video"]:
-            record_type = "video"
-            media_type = "video"
         else:
             record_type = "document"
             media_type = "document"
@@ -153,6 +159,7 @@ class InternetArchiveNormalizer(RecordNormalizer):
         dir_path = data.get("dir", f"items/{source_id}").strip("/")
 
         # Check files array for best primary file according to media_type
+        video_file = None
         audio_file = None
         image_file = None
         pdf_file = None
@@ -166,8 +173,14 @@ class InternetArchiveNormalizer(RecordNormalizer):
                 name_lower = name.lower()
                 fmt = f.get("format", "").lower()
 
+                # Video selection
+                if media_type == "video":
+                    if name_lower.endswith((".mp4", ".webm", ".ogv", ".mov", ".mkv", ".avi")) or "mpeg4" in fmt or "video" in fmt or "h.264" in fmt:
+                        if not video_file or name_lower.endswith(".mp4"):
+                            video_file = f
+
                 # Audio selection
-                if media_type == "audio":
+                elif media_type == "audio":
                     if name_lower.endswith((".mp3", ".m4a", ".ogg", ".wav")) or "mp3" in fmt or "audio" in fmt:
                         if not audio_file or "vbr mp3" in fmt or name_lower.endswith(".mp3"):
                             audio_file = f
@@ -191,7 +204,9 @@ class InternetArchiveNormalizer(RecordNormalizer):
                             image_file = f
 
         selected_file = None
-        if media_type == "audio":
+        if media_type == "video":
+            selected_file = video_file
+        elif media_type == "audio":
             selected_file = audio_file
         elif media_type == "image":
             selected_file = image_file
@@ -204,7 +219,17 @@ class InternetArchiveNormalizer(RecordNormalizer):
             primary_media_url = f"https://archive.org/download/{source_id}/{file_name}"
             
             # Determine MIME type accurately
-            if file_lower.endswith(".mp3"):
+            if file_lower.endswith(".mp4"):
+                mime_type = "video/mp4"
+            elif file_lower.endswith(".webm"):
+                mime_type = "video/webm"
+            elif file_lower.endswith(".ogv"):
+                mime_type = "video/ogg"
+            elif file_lower.endswith(".mov"):
+                mime_type = "video/quicktime"
+            elif file_lower.endswith(".mkv"):
+                mime_type = "video/x-matroska"
+            elif file_lower.endswith(".mp3"):
                 mime_type = "audio/mpeg"
             elif file_lower.endswith(".m4a"):
                 mime_type = "audio/mp4"
@@ -240,7 +265,10 @@ class InternetArchiveNormalizer(RecordNormalizer):
             )
         elif source_id:
             # Fallback based on media_type
-            if media_type == "audio":
+            if media_type == "video":
+                ext = "mp4"
+                mime = "video/mp4"
+            elif media_type == "audio":
                 ext = "mp3"
                 mime = "audio/mpeg"
             elif media_type == "image":
