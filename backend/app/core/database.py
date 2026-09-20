@@ -24,6 +24,22 @@ async_session_factory = async_sessionmaker(
 )
 
 
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+from pgvector.sqlalchemy import Vector
+
+
+# SQLite dialect compilation rules for local/test environments
+@compiles(JSONB, "sqlite")
+def compile_jsonb_sqlite(type_, compiler, **kw):
+    return "JSON"
+
+
+@compiles(Vector, "sqlite")
+def compile_vector_sqlite(type_, compiler, **kw):
+    return "TEXT"
+
+
 class Base(DeclarativeBase):
     pass
 
