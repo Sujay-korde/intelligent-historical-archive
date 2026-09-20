@@ -88,8 +88,25 @@ async def get_document(
     meta_resp = None
     if doc.doc_metadata:
         m = doc.doc_metadata
+        creators_list = []
+        if m.creators:
+            for c in m.creators:
+                if isinstance(c, dict):
+                    creators_list.append(c)
+                elif isinstance(c, str):
+                    creators_list.append({"name": c, "role": "Author"})
+                else:
+                    creators_list.append({"name": str(c), "role": "Author"})
+
+        prov_list = []
+        if m.provenance:
+            if isinstance(m.provenance, list):
+                prov_list = m.provenance
+            elif isinstance(m.provenance, dict):
+                prov_list = [m.provenance]
+
         meta_resp = DocumentMetadataResponse(
-            creators=m.creators or [],
+            creators=creators_list,
             date_raw=m.date_raw,
             date_start=m.date_start.isoformat() if m.date_start else None,
             date_end=m.date_end.isoformat() if m.date_end else None,
@@ -102,7 +119,7 @@ async def get_document(
             external_ids=m.external_ids or {},
             raw_metadata=m.raw_metadata or {},
             ai_metadata=m.ai_metadata or {},
-            provenance=m.provenance or [],
+            provenance=prov_list,
             confidence=float(m.confidence or 1.0),
         )
 

@@ -6,7 +6,7 @@ from backend.app.schemas.canonical import CreatorItem, MediaAsset, ProvenanceIte
 
 
 class DocumentMetadataResponse(BaseModel):
-    creators: List[CreatorItem] = []
+    creators: List[Any] = []
     date_raw: Optional[str] = None
     date_start: Optional[str] = None
     date_end: Optional[str] = None
@@ -19,7 +19,7 @@ class DocumentMetadataResponse(BaseModel):
     external_ids: Dict[str, str] = {}
     raw_metadata: Dict[str, Any] = {}
     ai_metadata: Dict[str, Any] = {}
-    provenance: List[ProvenanceItem] = []
+    provenance: List[Any] = []
     confidence: float = 1.0
 
 

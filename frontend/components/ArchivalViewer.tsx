@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ZoomIn, ZoomOut, Maximize2, FileText, Image as ImageIcon, BookOpen, ExternalLink } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, FileText, Image as ImageIcon, BookOpen, ExternalLink, Volume2 } from 'lucide-react';
 
 interface ArchivalViewerProps {
   title: string;
@@ -30,8 +30,9 @@ export default function ArchivalViewer({
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   const primaryAsset = mediaAssets[0] || null;
-  const isPdf = primaryAsset?.mime_type?.includes('pdf') || primaryAsset?.storage_key?.endsWith('.pdf');
-  const isImage = primaryAsset?.mime_type?.includes('image') || primaryAsset?.storage_key?.match(/\.(jpg|jpeg|png|tif|webp)$/i);
+  const isPdf = Boolean(primaryAsset?.mime_type?.includes('pdf') || primaryAsset?.storage_key?.toLowerCase().endsWith('.pdf'));
+  const isImage = Boolean(primaryAsset?.mime_type?.includes('image') || primaryAsset?.storage_key?.toLowerCase().match(/\.(jpg|jpeg|png|tif|tiff|webp)$/i));
+  const isAudio = Boolean(primaryAsset?.mime_type?.includes('audio') || primaryAsset?.storage_key?.toLowerCase().match(/\.(mp3|m4a|wav|ogg)$/i));
 
   const handleZoomIn = () => setZoomLevel((z) => Math.min(z + 0.25, 2.5));
   const handleZoomOut = () => setZoomLevel((z) => Math.max(z - 0.25, 0.5));
@@ -218,6 +219,66 @@ export default function ArchivalViewer({
                     boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
                   }}
                 />
+              </div>
+            ) : isAudio ? (
+              <div
+                style={{
+                  width: '100%',
+                  padding: '3rem 2rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: 'var(--color-surface-dark)',
+                  color: '#FFFFFF',
+                  textAlign: 'center',
+                }}
+              >
+                <div
+                  style={{
+                    width: '64px',
+                    height: '64px',
+                    borderRadius: '50%',
+                    backgroundColor: 'rgba(153, 117, 48, 0.2)',
+                    border: '2px solid var(--color-accent-gold)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginBottom: '1.25rem',
+                    color: 'var(--color-accent-gold)',
+                  }}
+                >
+                  <Volume2 size={32} />
+                </div>
+                <h4
+                  className="font-display"
+                  style={{ fontSize: '1.6rem', color: '#FFFFFF', marginBottom: '0.5rem' }}
+                >
+                  Historical Audio Broadcast & Speech
+                </h4>
+                <p
+                  style={{
+                    fontSize: '0.85rem',
+                    color: 'rgba(255,255,255,0.7)',
+                    maxWidth: '480px',
+                    marginBottom: '2rem',
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Primary phonographic / magnetic recording preserved in archival master quality ({primaryAsset?.mime_type}).
+                </p>
+                <audio
+                  controls
+                  src={mediaUrl}
+                  style={{
+                    width: '100%',
+                    maxWidth: '480px',
+                    borderRadius: '24px',
+                    outline: 'none',
+                  }}
+                >
+                  Your browser does not support audio playback.
+                </audio>
               </div>
             ) : (
               <div style={{ color: 'var(--color-surface-dark-text)', textAlign: 'center', padding: '2rem' }}>
