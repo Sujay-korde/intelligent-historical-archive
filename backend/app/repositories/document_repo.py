@@ -39,21 +39,37 @@ class DocumentRepository:
         self.session.add(doc)
         await self.session.flush()
 
+        # Parse dates into datetime.date if string format
+        d_start = None
+        d_end = None
+        if record.date_start:
+            try:
+                from datetime import datetime as dt_cls
+                d_start = dt_cls.fromisoformat(record.date_start.split("T")[0]).date()
+            except Exception:
+                d_start = None
+        if record.date_end:
+            try:
+                from datetime import datetime as dt_cls
+                d_end = dt_cls.fromisoformat(record.date_end.split("T")[0]).date()
+            except Exception:
+                d_end = None
+
         # Add metadata
         meta = DocumentMetadata(
             document_id=doc.id,
-            creators=[c.model_dump() for c in record.creators],
+            creators=[c.model_dump(mode="json") for c in record.creators],
             date_raw=record.date_raw,
-            date_start=record.date_start,
-            date_end=record.date_end,
+            date_start=d_start,
+            date_end=d_end,
             date_is_circa=record.date_is_circa,
             locations=record.locations,
             language=record.language or "English",
             subjects=record.subjects,
-            rights=record.rights,
+            rights=record.rights if isinstance(record.rights, dict) else {"statement": str(record.rights)},
             external_ids=record.external_ids,
             raw_metadata=record.raw_metadata,
-            provenance=[p.model_dump() for p in record.provenance_records],
+            provenance=[p.model_dump(mode="json") for p in record.provenance_records],
         )
         self.session.add(meta)
 
