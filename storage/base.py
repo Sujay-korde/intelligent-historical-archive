@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 from pydantic import BaseModel
 
 
@@ -13,7 +13,7 @@ class StoredFileMetadata(BaseModel):
 class StorageProvider(ABC):
     @abstractmethod
     async def save_stream(
-        self, stream: AsyncIterator[bytes], destination_key: str, content_type: str
+        self, stream: AsyncIterator[bytes], destination_key: str, content_type: str, max_bytes: Optional[int] = None
     ) -> StoredFileMetadata:
         """Stream data into storage with hash calculation and zero-copy chunking."""
         pass

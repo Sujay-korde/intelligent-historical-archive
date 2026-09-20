@@ -1,7 +1,7 @@
 import hashlib
 import os
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 import aiofiles
 
 from storage.base import StorageProvider, StoredFileMetadata
@@ -22,20 +22,47 @@ class LocalStorageProvider(StorageProvider):
         return target_path
 
     async def save_stream(
-        self, stream: AsyncIterator[bytes], destination_key: str, content_type: str
+        self, stream: AsyncIterator[bytes], destination_key: str, content_type: str, max_bytes: Optional[int] = None
     ) -> StoredFileMetadata:
         target_path = self._resolve_path(destination_key)
         target_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = target_path.with_suffix(f"{target_path.suffix}.tmp")
 
         sha256 = hashlib.sha256()
         total_bytes = 0
 
-        async with aiofiles.open(target_path, "wb") as f:
-            async for chunk in stream:
-                if chunk:
-                    sha256.update(chunk)
-                    total_bytes += len(chunk)
-                    await f.write(chunk)
+        try:
+            async with aiofiles.open(temp_path, "wb") as f:
+                async for chunk in stream:
+                    if chunk:
+                        if max_bytes and total_bytes + len(chunk) > max_bytes:
+                            allowed = max_bytes - total_bytes
+                            if allowed > 0:
+                                chunk = chunk[:allowed]
+                                sha256.update(chunk)
+                                total_bytes += len(chunk)
+                                await f.write(chunk)
+                            break
+                        sha256.update(chunk)
+                        total_bytes += len(chunk)
+                        await f.write(chunk)
+
+            if total_bytes == 0:
+                if temp_path.exists():
+                    temp_path.unlink()
+                raise ValueError(f"Downloaded stream for {destination_key} was empty (0 bytes).")
+
+            # Move temp file to final destination atomically
+            if target_path.exists():
+                target_path.unlink()
+            temp_path.replace(target_path)
+
+        except Exception:
+            if temp_path.exists():
+                temp_path.unlink()
+            if target_path.exists() and target_path.stat().st_size == 0:
+                target_path.unlink()
+            raise
 
         return StoredFileMetadata(
             storage_key=destination_key,

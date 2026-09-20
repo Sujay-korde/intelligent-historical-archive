@@ -10,12 +10,11 @@ from backend.app.models.document import Document
 from backend.app.repositories.chunk_repo import ChunkRepository
 from backend.app.repositories.document_repo import DocumentRepository
 from backend.app.repositories.entity_repo import EntityRepository
-from processing.base import DocumentProcessor, ExtractedContent, ExtractedPage
+from processing.base import BaseProcessor, DocumentProcessor, ExtractedContent, ExtractedPage
 from processing.chunking.base import Chunker
 from processing.chunking.text_chunker import TextChunker
 from processing.jobs.base import JobManager
-from processing.processors.pdf_processor import PDFProcessor
-from processing.processors.text_processor import TextProcessor
+from processing.registry import ProcessorRegistry, get_default_registry
 from storage.base import StorageProvider
 from storage.local_storage import LocalStorageProvider
 
@@ -37,14 +36,13 @@ class ProcessingService:
         self.embedding_provider = embedding_provider
         self.job_manager = job_manager
         self.chunker: Chunker = TextChunker()
+        self.registry: ProcessorRegistry = get_default_registry()
 
-        self.processors = [PDFProcessor(), TextProcessor()]
-
-    def _select_processor(self, mime_type: str, file_name: str) -> DocumentProcessor:
-        for p in self.processors:
-            if p.can_process(mime_type, file_name):
-                return p
-        return self.processors[0]
+    def _select_processor(self, mime_type: str, file_name: str) -> BaseProcessor:
+        try:
+            return self.registry.get_processor(mime_type=mime_type, file_path=file_name)
+        except Exception:
+            return self.registry.get_processor(extension="pdf")
 
     async def process_document(
         self, document_id: uuid.UUID, job_id: Optional[str] = None

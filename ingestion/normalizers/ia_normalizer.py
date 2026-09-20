@@ -90,25 +90,7 @@ class InternetArchiveNormalizer(RecordNormalizer):
         elif isinstance(raw_lang, str):
             language = raw_lang
 
-        # 8. Record & Media Type Determination
-        mediatype = str(metadata.get("mediatype", "")).lower()
-        if mediatype in ["texts", "book"]:
-            record_type = "book"
-            media_type = "document"
-        elif mediatype in ["image", "photo"]:
-            record_type = "photograph"
-            media_type = "image"
-        elif mediatype in ["audio", "sound"]:
-            record_type = "audio"
-            media_type = "audio"
-        elif mediatype in ["movies", "film", "video"]:
-            record_type = "video"
-            media_type = "video"
-        else:
-            record_type = "document"
-            media_type = "document"
-
-        # 9. Subjects
+        # 8. Subjects Extraction
         subjects: List[str] = []
         raw_subj = metadata.get("subject") or metadata.get("topic") or []
         if isinstance(raw_subj, list):
@@ -125,6 +107,39 @@ class InternetArchiveNormalizer(RecordNormalizer):
             else:
                 subjects = [raw_subj.strip()]
 
+        # 9. Record & Media Type Determination
+        mediatype = str(metadata.get("mediatype", "")).lower()
+        title_lower = title.lower()
+        desc_lower = (description or "").lower()
+        all_subj_text = " ".join(subjects).lower()
+
+        is_manuscript = any(
+            k in title_lower or k in desc_lower or k in all_subj_text
+            for k in ["manuscript", "holograph", "letter to", "[letter", "diary", "journal", "personal papers"]
+        )
+
+        if mediatype in ["audio", "sound"]:
+            record_type = "audio"
+            media_type = "audio"
+        elif mediatype in ["image", "photo"]:
+            if "map" in title_lower or "atlas" in title_lower or "cartograph" in all_subj_text:
+                record_type = "map"
+            else:
+                record_type = "photograph"
+            media_type = "image"
+        elif is_manuscript:
+            record_type = "manuscript"
+            media_type = "document"
+        elif mediatype in ["texts", "book"]:
+            record_type = "book"
+            media_type = "document"
+        elif mediatype in ["movies", "film", "video"]:
+            record_type = "video"
+            media_type = "video"
+        else:
+            record_type = "document"
+            media_type = "document"
+
         # 10. Rights & License
         rights: Dict[str, Any] = {}
         license_url = metadata.get("licenseurl") or metadata.get("rights")
@@ -137,33 +152,77 @@ class InternetArchiveNormalizer(RecordNormalizer):
         server = data.get("server", "ia800000.us.archive.org")
         dir_path = data.get("dir", f"items/{source_id}").strip("/")
 
-        # Check files array for best primary file (e.g. Text PDF, Original PDF, or High-res scan)
+        # Check files array for best primary file according to media_type
+        audio_file = None
+        image_file = None
         pdf_file = None
         txt_file = None
-        image_file = None
 
         if isinstance(files, list):
             for f in files:
                 if not isinstance(f, dict):
                     continue
                 name = f.get("name", "")
+                name_lower = name.lower()
                 fmt = f.get("format", "").lower()
 
-                if name.endswith(".pdf") or "pdf" in fmt:
-                    if not pdf_file or "text" in fmt:
-                        pdf_file = f
-                elif name.endswith("_djvu.txt") or "text" in fmt:
-                    txt_file = f
-                elif name.endswith((".jpg", ".png", ".jp2")) and "thumb" not in name.lower():
-                    if not image_file:
-                        image_file = f
+                # Audio selection
+                if media_type == "audio":
+                    if name_lower.endswith((".mp3", ".m4a", ".ogg", ".wav")) or "mp3" in fmt or "audio" in fmt:
+                        if not audio_file or "vbr mp3" in fmt or name_lower.endswith(".mp3"):
+                            audio_file = f
 
-        selected_file = pdf_file or txt_file or image_file
+                # Image selection
+                elif media_type == "image":
+                    if name_lower.endswith((".jpg", ".jpeg", ".png", ".tif", ".tiff")) and "thumb" not in name_lower:
+                        if not image_file or name_lower.endswith((".jpg", ".jpeg")):
+                            image_file = f
+
+                # Document / Manuscript selection
+                else:
+                    if name_lower.endswith(".pdf") or "pdf" in fmt:
+                        if not pdf_file or "text" in fmt:
+                            pdf_file = f
+                    elif name_lower.endswith("_djvu.txt") or "text" in fmt:
+                        if not txt_file:
+                            txt_file = f
+                    elif name_lower.endswith((".jpg", ".png")) and "thumb" not in name_lower:
+                        if not image_file:
+                            image_file = f
+
+        selected_file = None
+        if media_type == "audio":
+            selected_file = audio_file
+        elif media_type == "image":
+            selected_file = image_file
+        else:
+            selected_file = pdf_file or txt_file or image_file
 
         if selected_file:
             file_name = selected_file.get("name", "")
+            file_lower = file_name.lower()
             primary_media_url = f"https://archive.org/download/{source_id}/{file_name}"
-            mime_type = "application/pdf" if file_name.endswith(".pdf") else "text/plain" if file_name.endswith(".txt") else "image/jpeg"
+            
+            # Determine MIME type accurately
+            if file_lower.endswith(".mp3"):
+                mime_type = "audio/mpeg"
+            elif file_lower.endswith(".m4a"):
+                mime_type = "audio/mp4"
+            elif file_lower.endswith(".ogg"):
+                mime_type = "audio/ogg"
+            elif file_lower.endswith(".wav"):
+                mime_type = "audio/wav"
+            elif file_lower.endswith((".jpg", ".jpeg")):
+                mime_type = "image/jpeg"
+            elif file_lower.endswith(".png"):
+                mime_type = "image/png"
+            elif file_lower.endswith(".pdf"):
+                mime_type = "application/pdf"
+            elif file_lower.endswith(".txt"):
+                mime_type = "text/plain"
+            else:
+                mime_type = "application/octet-stream"
+
             size = selected_file.get("size")
             size_int = int(size) if size and str(size).isdigit() else None
             sha256 = selected_file.get("sha256") or selected_file.get("sha1")
@@ -180,14 +239,23 @@ class InternetArchiveNormalizer(RecordNormalizer):
                 )
             )
         elif source_id:
-            # Standard download pattern
-            primary_media_url = f"https://archive.org/download/{source_id}/{source_id}.pdf"
+            # Fallback based on media_type
+            if media_type == "audio":
+                ext = "mp3"
+                mime = "audio/mpeg"
+            elif media_type == "image":
+                ext = "jpg"
+                mime = "image/jpeg"
+            else:
+                ext = "pdf"
+                mime = "application/pdf"
+            primary_media_url = f"https://archive.org/download/{source_id}/{source_id}.{ext}"
             media_assets.append(
                 MediaAsset(
                     asset_id=f"{source_id}_default",
                     asset_role="primary",
                     media_type=media_type,
-                    mime_type="application/pdf",
+                    mime_type=mime,
                     url=primary_media_url,
                 )
             )
