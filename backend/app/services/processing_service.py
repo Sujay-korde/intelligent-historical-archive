@@ -5,6 +5,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.base import EmbeddingProvider, ExtractedEnrichment, LLMProvider
+from ai.services.enrichment_service import EnrichmentService
 from backend.app.core.config import settings
 from backend.app.models.document import Document
 from backend.app.repositories.chunk_repo import ChunkRepository
@@ -37,6 +38,7 @@ class ProcessingService:
         self.job_manager = job_manager
         self.chunker: Chunker = TextChunker()
         self.registry: ProcessorRegistry = get_default_registry()
+        self.enrichment_service = EnrichmentService(provider=self.llm_provider)
 
     def _select_processor(self, mime_type: str, file_name: str) -> BaseProcessor:
         try:
@@ -85,39 +87,19 @@ class ProcessingService:
                     full_text=full_text,
                 )
 
-            # 3. AI Enrichment (Metadata & Entities)
+            # 3. AI Enrichment (Metadata, Entities, Summaries)
             if job_id:
                 await self.job_manager.update_progress(job_id, step="AI_ENRICHMENT", progress_pct=40)
             await doc_repo.update_status(document_id, status="PROCESSING", processing_stage="AI_ENRICHMENT")
             await self.session.commit()
 
-            enrichment_prompt = f"Title: {doc.title}\nContent:\n{extracted_content.full_text[:4000]}"
-            ai_resp = await self.llm_provider.extract_structured(
-                prompt=enrichment_prompt,
-                schema=ExtractedEnrichment,
-                context={"text": extracted_content.full_text},
+            ai_resp = await self.enrichment_service.enrich_and_persist(
+                session=self.session,
+                document_id=document_id,
+                text=extracted_content.full_text,
+                context={"title": doc.title},
             )
-            enrichment_data: ExtractedEnrichment = ai_resp.data
-
-            # Update document metadata with AI insights
-            if doc.doc_metadata:
-                doc.doc_metadata.ai_metadata = {
-                    "summary": enrichment_data.metadata.summary,
-                    "historical_period": enrichment_data.metadata.historical_period,
-                    "topics": enrichment_data.metadata.topics,
-                    "geographic_references": enrichment_data.metadata.geographic_references,
-                    "model": ai_resp.model_name,
-                }
-                # Append to provenance
-                prov_list = list(doc.doc_metadata.provenance or [])
-                prov_list.append({
-                    "field": "ai_metadata",
-                    "value": "enriched",
-                    "source": "AI",
-                    "confidence": enrichment_data.metadata.confidence,
-                    "model_name": ai_resp.model_name,
-                })
-                doc.doc_metadata.provenance = prov_list
+            enrichment_data = ai_resp.data
 
             # 4. Chunking
             if job_id:
@@ -150,41 +132,8 @@ class ProcessingService:
                 dimension=self.embedding_provider.dimension,
             )
 
-            # 7. Persist Entities & Relationships
-            saved_entities = []
-            for ent_dto in enrichment_data.entities:
-                ent_model = await entity_repo.upsert_entity(
-                    name=ent_dto.name,
-                    entity_type=ent_dto.entity_type,
-                    authority_uri=ent_dto.authority_uri,
-                    description=ent_dto.description,
-                )
-                await entity_repo.link_document_entity(
-                    document_id=document_id,
-                    entity_id=ent_model.id,
-                    confidence=ent_dto.confidence,
-                    provenance="AI",
-                    relationship_type="MENTIONS",
-                )
-                saved_entities.append(ent_model)
-
-            # Create cross-entity relationships between co-occurring entities
-            for i in range(len(saved_entities)):
-                for j in range(i + 1, len(saved_entities)):
-                    e1, e2 = saved_entities[i], saved_entities[j]
-                    rel_type = "RELATED_TO"
-                    if e1.entity_type == "PERSON" and e2.entity_type == "ORGANIZATION":
-                        rel_type = "AFFILIATED_WITH"
-                    elif e1.entity_type == "ORGANIZATION" and e2.entity_type == "LOCATION":
-                        rel_type = "LOCATED_IN"
-
-                    await entity_repo.create_relationship(
-                        source_entity_id=e1.id,
-                        target_entity_id=e2.id,
-                        relationship_type=rel_type,
-                        confidence=0.85,
-                        source_document_id=document_id,
-                    )
+            # 7. Entities & Relationships (Persisted during Enrichment step)
+            saved_entities = enrichment_data.entities
 
             # 8. Calculate Quality Score
             quality = 85.0

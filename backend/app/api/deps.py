@@ -31,10 +31,17 @@ def get_job_manager() -> JobManager:
     return _job_manager
 
 
-def get_llm_provider() -> LLMProvider:
-    if settings.AI_PROVIDER == "gemini" and settings.GEMINI_API_KEY:
-        return GeminiProvider(api_key=settings.GEMINI_API_KEY)
-    return MockLLMProvider()
+from ai.factory import create_enrichment_provider
+from ai.interfaces.extractor import AIEnrichmentProvider
+from ai.services.enrichment_service import EnrichmentService
+
+
+def get_llm_provider() -> AIEnrichmentProvider:
+    return create_enrichment_provider()
+
+
+def get_enrichment_service() -> EnrichmentService:
+    return EnrichmentService(provider=get_llm_provider())
 
 
 def get_embedding_provider() -> EmbeddingProvider:
