@@ -65,6 +65,12 @@ class ProcessingService:
             if not doc:
                 raise ValueError(f"Document not found: {document_id}")
 
+            has_creators = bool(doc.doc_metadata and doc.doc_metadata.creators)
+            has_date = bool(doc.doc_metadata and doc.doc_metadata.date_raw)
+            doc_title = doc.title
+            doc_desc = doc.description
+            doc_source = doc.source
+
             # 1. Update status to PROCESSING
             await doc_repo.update_status(document_id, status="PROCESSING", processing_stage="EXTRACTING_TEXT")
             if job_id:
@@ -140,9 +146,9 @@ class ProcessingService:
 
             # 8. Calculate Quality Score
             quality = 85.0
-            if doc.doc_metadata and doc.doc_metadata.creators:
+            if has_creators:
                 quality += 5.0
-            if doc.doc_metadata and doc.doc_metadata.date_raw:
+            if has_date:
                 quality += 5.0
             if len(saved_entities) >= 3:
                 quality += 5.0

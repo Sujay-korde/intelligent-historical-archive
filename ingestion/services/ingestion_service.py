@@ -50,8 +50,32 @@ class CoreIngestionService:
         # 3. Stream & store media assets if available
         if canonical_record.media_assets and canonical_record.media_assets[0].url:
             primary_asset = canonical_record.media_assets[0]
-            ext = "pdf" if "pdf" in primary_asset.mime_type else "jpg"
-            storage_key = f"documents/{canonical_record.source}/{canonical_record.source_id}/{primary_asset.asset_id}.{ext}"
+            mime = (primary_asset.mime_type or "").lower()
+            url_str = (primary_asset.url or "").lower()
+            if "pdf" in mime or url_str.endswith(".pdf"):
+                ext = "pdf"
+            elif "audio" in mime or any(url_str.endswith(e) for e in [".mp3", ".m4a", ".wav", ".ogg"]):
+                ext = "mp3" if "mpeg" in mime or url_str.endswith(".mp3") else "m4a"
+            elif "video" in mime or any(url_str.endswith(e) for e in [".mp4", ".webm", ".mov", ".mkv"]):
+                ext = "mp4"
+            elif "png" in mime or url_str.endswith(".png"):
+                ext = "png"
+            elif any(url_str.endswith(e) for e in [".tif", ".tiff"]):
+                ext = "tif"
+            else:
+                ext = "jpg"
+
+            category = "documents"
+            if "audio" in mime or ext in ["mp3", "m4a", "wav"]:
+                category = "audio"
+            elif "video" in mime or ext in ["mp4", "webm"]:
+                category = "video"
+            elif "image" in mime or ext in ["jpg", "jpeg", "png", "tif"]:
+                category = "images"
+            elif canonical_record.record_type == "manuscript":
+                category = "manuscripts"
+
+            storage_key = f"{category}/{canonical_record.source}/{canonical_record.source_id}.{ext}"
 
             try:
                 media_stream = await adapter.download_media(primary_asset.url)

@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import Link from 'next/navigation';
 import { usePathname } from 'next/navigation';
-import { Search, Database, Layers, Sparkles, BookOpen, Compass, Info } from 'lucide-react';
+import { Search, Database, Layers, Sparkles, BookOpen, Compass, Info, UploadCloud } from 'lucide-react';
 import { getHealthStatus } from '../lib/api';
 
 export default function GlobalNav() {
@@ -20,6 +20,7 @@ export default function GlobalNav() {
     { href: '/explore', label: 'Explore', icon: Compass },
     { href: '/connections', label: 'Connections', icon: Layers },
     { href: '/collections', label: 'Collections', icon: BookOpen },
+    { href: '/deposit', label: 'Deposit', icon: UploadCloud },
     { href: '/about', label: 'About', icon: Info },
   ];
 

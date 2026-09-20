@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { ZoomIn, ZoomOut, Maximize2, FileText, Image as ImageIcon, BookOpen, ExternalLink, Volume2 } from 'lucide-react';
+import { ZoomIn, ZoomOut, Maximize2, FileText, Image as ImageIcon, BookOpen, ExternalLink, Volume2, Video as VideoIcon } from 'lucide-react';
 
 interface ArchivalViewerProps {
   title: string;
@@ -33,6 +33,7 @@ export default function ArchivalViewer({
   const isPdf = Boolean(primaryAsset?.mime_type?.includes('pdf') || primaryAsset?.storage_key?.toLowerCase().endsWith('.pdf'));
   const isImage = Boolean(primaryAsset?.mime_type?.includes('image') || primaryAsset?.storage_key?.toLowerCase().match(/\.(jpg|jpeg|png|tif|tiff|webp)$/i));
   const isAudio = Boolean(primaryAsset?.mime_type?.includes('audio') || primaryAsset?.storage_key?.toLowerCase().match(/\.(mp3|m4a|wav|ogg)$/i));
+  const isVideo = Boolean(primaryAsset?.mime_type?.includes('video') || primaryAsset?.storage_key?.toLowerCase().match(/\.(mp4|webm|mov|mkv|avi)$/i));
 
   const handleZoomIn = () => setZoomLevel((z) => Math.min(z + 0.25, 2.5));
   const handleZoomOut = () => setZoomLevel((z) => Math.max(z - 0.25, 0.5));
@@ -279,6 +280,32 @@ export default function ArchivalViewer({
                 >
                   Your browser does not support audio playback.
                 </audio>
+              </div>
+            ) : isVideo ? (
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: '#000000',
+                  padding: '1rem',
+                }}
+              >
+                <video
+                  controls
+                  src={mediaUrl}
+                  style={{
+                    maxWidth: '100%',
+                    maxHeight: '560px',
+                    borderRadius: 'var(--radius-xs)',
+                    boxShadow: '0 8px 30px rgba(0,0,0,0.6)',
+                  }}
+                >
+                  Your browser does not support video playback.
+                </video>
               </div>
             ) : (
               <div style={{ color: 'var(--color-surface-dark-text)', textAlign: 'center', padding: '2rem' }}>
