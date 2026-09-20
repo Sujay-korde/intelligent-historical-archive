@@ -96,3 +96,13 @@ def get_recommendation_service(
     session: AsyncSession = Depends(get_db),
 ) -> RecommendationService:
     return RecommendationService(session=session)
+
+
+from backend.app.repositories.document_repo import DocumentRepository
+
+
+def get_document_repository(
+    session: AsyncSession = Depends(get_db),
+) -> DocumentRepository:
+    return DocumentRepository(session=session)
+
