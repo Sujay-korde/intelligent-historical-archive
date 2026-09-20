@@ -49,7 +49,10 @@ class PDFProcessor(BaseProcessor):
         start_time = time.perf_counter()
         validated_path = self.validate(Path(file_path))
 
-        import fitz  # PyMuPDF
+        try:
+            import pymupdf as fitz
+        except ImportError:
+            import fitz
 
         warnings: List[str] = []
         page_infos: List[PageInfo] = []

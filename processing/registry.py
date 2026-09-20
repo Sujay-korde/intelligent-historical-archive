@@ -4,9 +4,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from processing.base import BaseProcessor
 from processing.ocr.base import BaseOCRProvider
+from processing.processors.audio_processor import AudioProcessor
+from processing.processors.handwriting_processor import HandwritingProcessor
 from processing.processors.image_processor import ImageProcessor
 from processing.processors.pdf_processor import PDFProcessor
 from processing.processors.text_processor import TextProcessor
+from processing.processors.video_processor import VideoProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -78,17 +81,26 @@ class ProcessorRegistry:
         ]
 
 
+
+
+
 def get_default_registry(ocr_provider: Optional[BaseOCRProvider] = None) -> ProcessorRegistry:
     """
-    Factory creating a ProcessorRegistry pre-loaded with standard processors:
+    Factory creating a ProcessorRegistry pre-loaded with modality processors:
     1. PDFProcessor (priority 10)
     2. ImageProcessor (priority 10)
-    3. TextProcessor (priority 5)
+    3. HandwritingProcessor (priority 8)
+    4. TextProcessor (priority 5)
+    5. AudioProcessor (priority 5)
+    6. VideoProcessor (priority 5)
     """
     registry = ProcessorRegistry()
     registry.register(PDFProcessor(ocr_provider=ocr_provider), priority=10)
     registry.register(ImageProcessor(ocr_provider=ocr_provider), priority=10)
+    registry.register(HandwritingProcessor(htr_provider=ocr_provider), priority=8)
     registry.register(TextProcessor(), priority=5)
+    registry.register(AudioProcessor(), priority=5)
+    registry.register(VideoProcessor(), priority=5)
     return registry
 
 

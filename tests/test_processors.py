@@ -2,7 +2,10 @@ import io
 from pathlib import Path
 import pytest
 from PIL import Image
-import fitz
+try:
+    import pymupdf as fitz
+except ImportError:
+    import fitz
 
 from processing.base import BaseProcessor
 from processing.models.result import ProcessingResult
