@@ -9,10 +9,11 @@ from storage.base import StorageProvider
 router = APIRouter()
 
 
-@router.get(
+@router.api_route(
     "/{storage_key:path}",
+    methods=["GET", "HEAD"],
     summary="Stream Archival Media Asset",
-    description="Streams physical PDF documents, high-resolution scans, images, and audio assets.",
+    description="Streams physical PDF documents, manuscripts, high-resolution scans, images, and audio assets.",
 )
 async def get_media_asset(
     storage_key: str,
@@ -34,12 +35,19 @@ async def get_media_asset(
 
     mime_type, _ = mimetypes.guess_type(str(file_path))
     if not mime_type:
-        if file_path.suffix.lower() == ".pdf":
+        ext = file_path.suffix.lower()
+        if ext == ".pdf":
             mime_type = "application/pdf"
-        elif file_path.suffix.lower() in [".jpg", ".jpeg"]:
+        elif ext in [".jpg", ".jpeg"]:
             mime_type = "image/jpeg"
-        elif file_path.suffix.lower() == ".png":
+        elif ext == ".png":
             mime_type = "image/png"
+        elif ext in [".txt", ".text"]:
+            mime_type = "text/plain; charset=utf-8"
+        elif ext == ".mp4":
+            mime_type = "video/mp4"
+        elif ext == ".mp3":
+            mime_type = "audio/mpeg"
         else:
             mime_type = "application/octet-stream"
 
@@ -47,6 +55,7 @@ async def get_media_asset(
         path=file_path,
         media_type=mime_type,
         filename=file_path.name,
+        content_disposition_type="inline",
         headers={
             "Cache-Control": "public, max-age=86400",
             "Accept-Ranges": "bytes",

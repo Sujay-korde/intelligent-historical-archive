@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, FileText, Image as ImageIcon, BookOpen, ExternalLink, Volume2, Video as VideoIcon } from 'lucide-react';
 
 interface ArchivalViewerProps {
@@ -30,6 +30,8 @@ export default function ArchivalViewer({
   const [viewMode, setViewMode] = useState<'scan' | 'transcript'>('scan');
   const [zoomLevel, setZoomLevel] = useState(1.0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [textContent, setTextContent] = useState<string>('');
+  const [isLoadingText, setIsLoadingText] = useState(false);
 
   // Intelligently select asset matching recordType or primary role
   const primaryAsset =
@@ -37,6 +39,8 @@ export default function ArchivalViewer({
       ? mediaAssets.find((a) => a.media_type === 'video' || a.mime_type?.includes('video'))
       : recordType === 'audio'
       ? mediaAssets.find((a) => a.media_type === 'audio' || a.mime_type?.includes('audio'))
+      : recordType === 'manuscript'
+      ? mediaAssets.find((a) => a.media_type === 'manuscript' || a.media_type === 'document' || a.mime_type?.includes('pdf') || a.mime_type?.includes('text'))
       : null) ||
     mediaAssets.find((a) => a.asset_role === 'primary') ||
     mediaAssets[0] ||
@@ -73,6 +77,13 @@ export default function ArchivalViewer({
       rawKey.toLowerCase().endsWith('.pdf')
     )
   );
+  const isText = Boolean(
+    !isVideo && !isAudio && !isImage && !isPdf && (
+      primaryAsset?.mime_type?.includes('text') ||
+      rawKey.toLowerCase().match(/\.(txt|md|text|csv|json)$/i) ||
+      recordType === 'manuscript'
+    )
+  );
 
   const handleZoomIn = () => setZoomLevel((z) => Math.min(z + 0.25, 2.5));
   const handleZoomOut = () => setZoomLevel((z) => Math.max(z - 0.25, 0.5));
@@ -90,6 +101,25 @@ export default function ArchivalViewer({
   } else if (primaryAsset?.access_url) {
     mediaUrl = primaryAsset.access_url;
   }
+
+  useEffect(() => {
+    if (isText && mediaUrl) {
+      setIsLoadingText(true);
+      fetch(mediaUrl)
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.text();
+        })
+        .then((txt) => {
+          setTextContent(txt);
+          setIsLoadingText(false);
+        })
+        .catch(() => {
+          setTextContent(extractedTextPreview || '');
+          setIsLoadingText(false);
+        });
+    }
+  }, [isText, mediaUrl, extractedTextPreview]);
 
   return (
     <div
@@ -225,7 +255,7 @@ export default function ArchivalViewer({
         style={{
           minHeight: '520px',
           height: '620px',
-          backgroundColor: viewMode === 'scan' ? 'var(--color-surface-dark)' : 'var(--color-paper-base)',
+          backgroundColor: isPdf ? '#525659' : viewMode === 'scan' ? 'var(--color-surface-dark)' : 'var(--color-paper-base)',
           position: 'relative',
           overflow: 'auto',
           display: 'flex',
@@ -236,15 +266,59 @@ export default function ArchivalViewer({
         {viewMode === 'scan' ? (
           mediaUrl ? (
             isPdf ? (
-              <iframe
-                src={`${mediaUrl}#toolbar=1&navpanes=0`}
-                title={title}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  border: 'none',
-                }}
-              />
+              <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+                <iframe
+                  src={`${mediaUrl}#toolbar=1&navpanes=0`}
+                  title={title}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    flex: 1,
+                    border: 'none',
+                    backgroundColor: '#FFFFFF',
+                  }}
+                />
+                <div
+                  style={{
+                    padding: '0.45rem 1rem',
+                    backgroundColor: 'var(--color-paper-surface)',
+                    borderTop: '1px solid var(--color-paper-border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    fontSize: '0.75rem',
+                    color: 'var(--color-ink-muted)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                    <BookOpen size={13} color="var(--color-accent-oxblood)" />
+                    <span>Archival Facsimile & Digitized Manuscript Scan</span>
+                    {primaryAsset?.file_size_bytes && (
+                      <span style={{ opacity: 0.6 }}>
+                        • {(primaryAsset.file_size_bytes / (1024 * 1024)).toFixed(1)} MB
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <a
+                      href={mediaUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        color: 'var(--color-accent-oxblood)',
+                        textDecoration: 'none',
+                        fontWeight: 600,
+                      }}
+                    >
+                      <ExternalLink size={12} />
+                      <span>Open Fullscreen Scan</span>
+                    </a>
+                  </div>
+                </div>
+              </div>
             ) : isImage ? (
               <div
                 style={{
@@ -407,6 +481,83 @@ export default function ArchivalViewer({
                     </a>
                   </div>
                 </div>
+              </div>
+            ) : isText ? (
+              <div
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  overflowY: 'auto',
+                  backgroundColor: '#FAF7F0',
+                  padding: '2.5rem 3rem',
+                  color: 'var(--color-ink-primary)',
+                  fontFamily: 'Cormorant Garamond, Georgia, serif',
+                  lineHeight: 1.85,
+                }}
+              >
+                <div
+                  style={{
+                    borderBottom: '2px solid #D4C5A9',
+                    paddingBottom: '1rem',
+                    marginBottom: '1.5rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div>
+                    <span
+                      style={{
+                        fontSize: '0.7rem',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                        color: 'var(--color-accent-oxblood)',
+                        fontWeight: 700,
+                      }}
+                    >
+                      Digitized Manuscript Proclamation & Text
+                    </span>
+                    <h3
+                      className="font-display"
+                      style={{
+                        fontSize: '1.5rem',
+                        color: 'var(--color-ink-primary)',
+                        marginTop: '0.2rem',
+                      }}
+                    >
+                      {title}
+                    </h3>
+                  </div>
+                  {mediaUrl && (
+                    <a
+                      href={mediaUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-archival btn-oxblood"
+                      style={{ fontSize: '0.75rem', padding: '0.35rem 0.75rem' }}
+                    >
+                      Raw Transcript
+                    </a>
+                  )}
+                </div>
+
+                {isLoadingText ? (
+                  <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--color-ink-muted)' }}>
+                    Loading digitized manuscript text...
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      fontSize: `${1.05 * zoomLevel}rem`,
+                      whiteSpace: 'pre-wrap',
+                      textAlign: 'justify',
+                      textJustify: 'inter-word',
+                      letterSpacing: '0.01em',
+                    }}
+                  >
+                    {textContent || extractedTextPreview || 'No transcribed manuscript text available.'}
+                  </div>
+                )}
               </div>
             ) : (
               <div style={{ color: 'var(--color-surface-dark-text)', textAlign: 'center', padding: '2rem' }}>
